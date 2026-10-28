@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+const positiveInteger = z.string().regex(/^[1-9]\d*$/);
+
 export const createBookingSchema = z.object({
   body: z.object({
     slotId: z.string().uuid(),
@@ -19,8 +21,8 @@ export const listAppointmentsSchema = z.object({
         "NO_SHOW",
       ])
       .optional(),
-    page: z.string().optional(),
-    pageSize: z.string().optional(),
+    page: positiveInteger.optional(),
+    pageSize: positiveInteger.optional(),
   }),
 });
 

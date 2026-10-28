@@ -37,7 +37,11 @@ bookingsRouter.get(
   asyncHandler(async (req, res) => {
     const result = await bookingsService.listAppointments(
       req.user!,
-      req.query as { status?: string; page?: string; pageSize?: string },
+      req.validatedQuery as {
+        status?: string;
+        page?: string;
+        pageSize?: string;
+      },
     );
     res.json(result);
   }),

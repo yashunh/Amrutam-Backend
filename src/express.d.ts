@@ -5,6 +5,7 @@ declare global {
     interface Request {
       user?: AuthUser;
       requestId: string;
+      validatedQuery?: unknown;
     }
   }
 }

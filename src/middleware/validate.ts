@@ -33,7 +33,7 @@ export function validate(schema: RequestSchema) {
       req.body = parsed.data.body;
     }
     if (parsed.data.query !== undefined) {
-      req.query = parsed.data.query as Request["query"];
+      req.validatedQuery = parsed.data.query;
     }
     if (parsed.data.params !== undefined) {
       req.params = parsed.data.params as Request["params"];

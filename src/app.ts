@@ -27,6 +27,10 @@ import { AppError } from "./utils/errors";
 
 const corsOrigins = env.CORS_ORIGIN.split(",").map((origin) => origin.trim());
 
+export function serializeResponseForLog(res: { statusCode: number }) {
+  return { statusCode: res.statusCode };
+}
+
 export function createApp() {
   const app = express();
   app.disable("x-powered-by");
@@ -58,6 +62,7 @@ export function createApp() {
             url: req.url,
           };
         },
+        res: serializeResponseForLog,
       },
     }),
   );

@@ -20,7 +20,7 @@ doctorsRouter.get(
   validate(searchDoctorsSchema),
   asyncHandler(async (req, res) => {
     const result = await doctorsService.searchDoctors(
-      req.query as {
+      req.validatedQuery as {
         specialization?: string;
         availableFrom?: string;
         availableTo?: string;

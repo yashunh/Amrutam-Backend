@@ -1,6 +1,35 @@
 import { z } from "zod";
 
 const uuid = z.string().uuid();
+const positiveInteger = z.string().regex(/^[1-9]\d*$/);
+const dateTime = z.string().datetime({ offset: true });
+
+const doctorSearchQuery = z
+  .object({
+    specialization: z.string().trim().max(120).optional(),
+    availableFrom: dateTime.optional(),
+    availableTo: dateTime.optional(),
+    page: positiveInteger.optional(),
+    pageSize: positiveInteger.optional(),
+  })
+  .refine(
+    ({ availableFrom, availableTo }) =>
+      (availableFrom === undefined) === (availableTo === undefined),
+    {
+      message: "availableFrom and availableTo must be provided together",
+      path: ["availableTo"],
+    },
+  )
+  .refine(
+    ({ availableFrom, availableTo }) =>
+      availableFrom === undefined ||
+      availableTo === undefined ||
+      Date.parse(availableFrom) < Date.parse(availableTo),
+    {
+      message: "availableTo must be after availableFrom",
+      path: ["availableTo"],
+    },
+  );
 
 export const createDoctorSchema = z.object({
   body: z.object({
@@ -26,13 +55,7 @@ export const updateDoctorSchema = z.object({
 });
 
 export const searchDoctorsSchema = z.object({
-  query: z.object({
-    specialization: z.string().trim().max(120).optional(),
-    availableFrom: z.string().min(1).optional(),
-    availableTo: z.string().min(1).optional(),
-    page: z.string().optional(),
-    pageSize: z.string().optional(),
-  }),
+  query: doctorSearchQuery,
 });
 
 export const doctorIdParam = z.object({
@@ -41,16 +64,16 @@ export const doctorIdParam = z.object({
 
 export const createSlotSchema = z.object({
   body: z.object({
-    startsAt: z.string().min(1),
-    endsAt: z.string().min(1),
+    startsAt: dateTime,
+    endsAt: dateTime,
   }),
 });
 
 export const updateSlotSchema = z.object({
   params: z.object({ slotId: uuid }),
   body: z.object({
-    startsAt: z.string().min(1).optional(),
-    endsAt: z.string().min(1).optional(),
+    startsAt: dateTime.optional(),
+    endsAt: dateTime.optional(),
     status: z.enum(["AVAILABLE", "BLOCKED"]).optional(),
   }),
 });

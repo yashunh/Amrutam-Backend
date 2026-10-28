@@ -16,6 +16,34 @@ describe("booking", () => {
     expect(booked.status).toBe(201);
     expect(booked.body.consultation.slotId).toBe(doctor.slot.id);
     expect(booked.body.payment.status).toBe("PENDING");
+
+    const appointments = await request(app)
+      .get("/v1/bookings")
+      .set("Authorization", `Bearer ${patient.res.body.accessToken}`)
+      .query({ page: "1", pageSize: "10" });
+    expect(appointments.status).toBe(200);
+    expect(appointments.body.items).toHaveLength(1);
+  });
+
+  it("rejects malformed or overlapping availability", async () => {
+    const doctor = await createVerifiedDoctor(app);
+    const authorization = `Bearer ${doctor.doctorToken}`;
+
+    const malformed = await request(app)
+      .post("/v1/doctors/me/availability")
+      .set("Authorization", authorization)
+      .send({ startsAt: "not-a-date", endsAt: "also-not-a-date" });
+    expect(malformed.status).toBe(400);
+
+    const overlapping = await request(app)
+      .post("/v1/doctors/me/availability")
+      .set("Authorization", authorization)
+      .send({
+        startsAt: doctor.slot.startsAt,
+        endsAt: doctor.slot.endsAt,
+      });
+    expect(overlapping.status).toBe(409);
+    expect(overlapping.body.error.code).toBe("SLOT_OVERLAP");
   });
 
   it("rejects concurrent bookings of the same slot", async () => {
