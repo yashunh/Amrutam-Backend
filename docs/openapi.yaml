@@ -1,0 +1,790 @@
+openapi: 3.1.0
+info:
+  title: Amrutam Telemedicine API
+  version: 1.0.0
+  description: >-
+    OpenAPI contract for the Amrutam Backend REST API. Paths and request constraints
+    are based on the route and Zod schema definitions in the repository. Some response
+    objects are intentionally represented as generic objects and should be tightened
+    as service response contracts are finalized.
+servers:
+  - url: http://localhost:3000
+    description: Local development (adjust to PORT/configuration)
+tags:
+  - name: General
+  - name: Health
+  - name: Authentication
+  - name: Doctors
+  - name: Admin Doctors
+  - name: Bookings
+  - name: Consultations
+  - name: Prescriptions
+  - name: Payments
+  - name: Admin
+paths:
+  /:
+    get:
+      tags: [General]
+      summary: API service information
+      operationId: getServiceInfo
+      responses:
+        '200':
+          description: Service name and version
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  name: { type: string, example: Amrutam Telemedicine API }
+                  version: { type: string, example: 1.0.0 }
+                required: [name, version]
+  /health:
+    get:
+      tags: [Health]
+      summary: Liveness check
+      operationId: getHealth
+      security: []
+      responses:
+        '200':
+          description: API process is responding
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status: { type: string, const: ok }
+                  service: { type: string, example: amrutam-api }
+                required: [status, service]
+    head:
+      tags: [Health]
+      summary: Liveness check (headers only)
+      operationId: headHealth
+      security: []
+      responses:
+        '200': { description: API process is responding }
+  /health/ready:
+    get:
+      tags: [Health]
+      summary: Readiness and dependency check
+      operationId: getReadiness
+      security: []
+      responses:
+        '200':
+          description: Required dependencies passed the current readiness check
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Readiness' }
+        '503':
+          description: A dependency is unavailable
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Readiness' }
+  /metrics:
+    get:
+      tags: [Health]
+      summary: Prometheus metrics
+      operationId: getMetrics
+      security: []
+      description: Restrict access to trusted monitoring infrastructure in production if required.
+      responses:
+        '200':
+          description: Prometheus metrics exposition
+          content:
+            text/plain:
+              schema: { type: string }
+            application/openmetrics-text:
+              schema: { type: string }
+  /v1/auth/register:
+    post:
+      tags: [Authentication]
+      summary: Register a patient account
+      operationId: registerPatient
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RegisterPatientRequest' }
+      responses:
+        '201':
+          description: Patient account created and session issued
+          headers:
+            Set-Cookie:
+              schema: { type: string }
+              description: HttpOnly refresh_token cookie may be set.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthSession' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '409': { description: Email already registered }
+        '429': { description: Rate limit exceeded }
+  /v1/auth/login:
+    post:
+      tags: [Authentication]
+      summary: Log in
+      operationId: login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200':
+          description: Session issued
+          headers:
+            Set-Cookie:
+              schema: { type: string }
+              description: HttpOnly refresh_token cookie may be set.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthSession' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { description: Rate limit exceeded }
+  /v1/auth/refresh:
+    post:
+      tags: [Authentication]
+      summary: Rotate refresh token and issue a new access token
+      operationId: refreshSession
+      security: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                refreshToken:
+                  type: string
+                  minLength: 16
+                  maxLength: 512
+                  description: Optional when refresh_token cookie is present.
+      responses:
+        '200':
+          description: Refreshed session
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AuthSession' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /v1/auth/logout:
+    post:
+      tags: [Authentication]
+      summary: Revoke refresh token and clear refresh cookie
+      operationId: logout
+      security: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                refreshToken: { type: string, minLength: 16, maxLength: 512 }
+      responses:
+        '204': { description: Logged out successfully }
+        '400': { $ref: '#/components/responses/ValidationError' }
+  /v1/auth/me:
+    get:
+      tags: [Authentication]
+      summary: Get current authenticated user
+      operationId: getCurrentUser
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Current user profile
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /v1/doctors:
+    get:
+      tags: [Doctors]
+      summary: Search doctors
+      operationId: searchDoctors
+      security: []
+      parameters:
+        - in: query
+          name: specialization
+          schema: { type: string, maxLength: 120 }
+        - in: query
+          name: availableFrom
+          schema: { type: string, format: date-time }
+          description: Must be supplied together with availableTo.
+        - in: query
+          name: availableTo
+          schema: { type: string, format: date-time }
+          description: Must be later than availableFrom.
+        - in: query
+          name: page
+          schema: { type: integer, minimum: 1 }
+        - in: query
+          name: pageSize
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: Matching doctors and pagination metadata
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GenericObject' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+  /v1/doctors/me:
+    get:
+      tags: [Doctors]
+      summary: Get current doctor's profile
+      operationId: getMyDoctorProfile
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200': { $ref: '#/components/responses/GenericObjectResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    patch:
+      tags: [Doctors]
+      summary: Update current doctor's profile
+      operationId: updateMyDoctorProfile
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateDoctorRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/GenericObjectResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /v1/doctors/me/availability:
+    get:
+      tags: [Doctors]
+      summary: List current doctor's availability slots
+      operationId: listMyAvailability
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: Availability slots
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/GenericObject' } }
+                required: [items]
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [Doctors]
+      summary: Create an availability slot
+      operationId: createAvailability
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAvailabilityRequest' }
+      responses:
+        '201': { $ref: '#/components/responses/GenericObjectResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /v1/doctors/me/availability/{slotId}:
+    patch:
+      tags: [Doctors]
+      summary: Update an availability slot
+      operationId: updateAvailability
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/SlotId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UpdateAvailabilityRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/GenericObjectResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /v1/doctors/{id}:
+    get:
+      tags: [Doctors]
+      summary: Get doctor details
+      operationId: getDoctor
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+      responses:
+        '200': { $ref: '#/components/responses/GenericObjectResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '404': { description: Doctor not found }
+  /v1/doctors/{id}/availability:
+    get:
+      tags: [Doctors]
+      summary: List available slots for a doctor
+      operationId: listDoctorAvailability
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+      responses:
+        '200':
+          description: Available slots
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/GenericObject' } }
+                required: [items]
+        '400': { $ref: '#/components/responses/ValidationError' }
+  /v1/admin/doctors:
+    post:
+      tags: [Admin Doctors]
+      summary: Create a doctor account
+      operationId: createDoctor
+      security: [{ bearerAuth: [] }]
+      x-required-roles: [ADMIN]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateDoctorRequest' }
+      responses:
+        '201': { $ref: '#/components/responses/GenericObjectResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /v1/admin/doctors/{id}/verify:
+    post:
+      tags: [Admin Doctors]
+      summary: Verify a doctor
+      operationId: verifyDoctor
+      security: [{ bearerAuth: [] }]
+      x-required-roles: [ADMIN]
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+      responses:
+        '200': { $ref: '#/components/responses/GenericObjectResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /v1/bookings:
+    post:
+      tags: [Bookings]
+      summary: Book an available slot
+      operationId: createBooking
+      security: [{ bearerAuth: [] }]
+      x-required-roles: [PATIENT, ADMIN]
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: false
+          schema: { type: string, maxLength: 255 }
+          description: Optional key to help prevent duplicate booking submissions.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateBookingRequest' }
+      responses:
+        '201': { $ref: '#/components/responses/GenericObjectResponse' }
+        '200': { $ref: '#/components/responses/GenericObjectResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { description: Slot conflict or idempotency conflict }
+        '429': { description: Rate limit exceeded }
+    get:
+      tags: [Bookings]
+      summary: List appointments visible to current user
+      operationId: listAppointments
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [BOOKED, CONFIRMED, IN_PROGRESS, COMPLETED, CANCELLED, NO_SHOW]
+        - in: query
+          name: page
+          schema: { type: integer, minimum: 1 }
+        - in: query
+          name: pageSize
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '200': { $ref: '#/components/responses/GenericObjectResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /v1/bookings/{id}/cancel:
+    post:
+      tags: [Bookings]
+      summary: Cancel an appointment
+      operationId: cancelAppointment
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+      responses:
+        '200': { $ref: '#/components/responses/GenericObjectResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: Appointment not found }
+  /v1/appointments:
+    post:
+      tags: [Bookings]
+      summary: Alias for creating a booking
+      operationId: createAppointmentAlias
+      security: [{ bearerAuth: [] }]
+      x-required-roles: [PATIENT, ADMIN]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateBookingRequest' }
+      responses:
+        '201': { $ref: '#/components/responses/GenericObjectResponse' }
+        '200': { $ref: '#/components/responses/GenericObjectResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    get:
+      tags: [Bookings]
+      summary: Alias for listing appointments
+      operationId: listAppointmentsAlias
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - in: query
+          name: status
+          schema: { type: string, enum: [BOOKED, CONFIRMED, IN_PROGRESS, COMPLETED, CANCELLED, NO_SHOW] }
+        - in: query
+          name: page
+          schema: { type: integer, minimum: 1 }
+        - in: query
+          name: pageSize
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '200': { $ref: '#/components/responses/GenericObjectResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+  /v1/appointments/{id}/cancel:
+    post:
+      tags: [Bookings]
+      summary: Alias for cancelling an appointment
+      operationId: cancelAppointmentAlias
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+      responses:
+        '200': { $ref: '#/components/responses/GenericObjectResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /v1/consultations/{id}:
+    get:
+      tags: [Consultations]
+      summary: Get consultation details
+      operationId: getConsultation
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+      responses:
+        '200': { $ref: '#/components/responses/GenericObjectResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: Consultation not found }
+  /v1/consultations/{id}/status:
+    patch:
+      tags: [Consultations]
+      summary: Transition consultation status
+      operationId: updateConsultationStatus
+      security: [{ bearerAuth: [] }]
+      x-required-roles: [DOCTOR, ADMIN]
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [CONFIRMED, IN_PROGRESS, COMPLETED, NO_SHOW]
+      responses:
+        '200': { $ref: '#/components/responses/GenericObjectResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /v1/consultations/{id}/prescriptions:
+    post:
+      tags: [Prescriptions]
+      summary: Create a prescription for a consultation
+      operationId: createConsultationPrescription
+      security: [{ bearerAuth: [] }]
+      x-required-roles: [DOCTOR, ADMIN]
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreatePrescriptionRequest' }
+      responses:
+        '201': { $ref: '#/components/responses/GenericObjectResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    get:
+      tags: [Prescriptions]
+      summary: Get prescription for a consultation
+      operationId: getConsultationPrescription
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+      responses:
+        '200': { $ref: '#/components/responses/GenericObjectResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: Prescription not found }
+  /v1/prescriptions/{id}:
+    get:
+      tags: [Prescriptions]
+      summary: Get prescription by ID
+      operationId: getPrescription
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+      responses:
+        '200': { $ref: '#/components/responses/GenericObjectResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: Prescription not found }
+  /v1/payments/{id}:
+    get:
+      tags: [Payments]
+      summary: Get payment details
+      operationId: getPayment
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+      responses:
+        '200': { $ref: '#/components/responses/GenericObjectResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: Payment not found }
+  /v1/payments/{id}/simulate:
+    post:
+      tags: [Payments]
+      summary: Simulate a payment outcome (development/testing flow)
+      operationId: simulatePayment
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/UuidId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                outcome:
+                  type: string
+                  enum: [SUCCEEDED, FAILED]
+                  default: SUCCEEDED
+                providerReference:
+                  type: string
+                  minLength: 4
+                  maxLength: 255
+      responses:
+        '200': { $ref: '#/components/responses/GenericObjectResponse' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+  /v1/admin/analytics:
+    get:
+      tags: [Admin]
+      summary: Get administrative consultation and payment analytics
+      operationId: getAdminAnalytics
+      security: [{ bearerAuth: [] }]
+      x-required-roles: [ADMIN]
+      responses:
+        '200':
+          description: Aggregated counts and payment totals by status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  consultations:
+                    type: object
+                    additionalProperties: { type: integer }
+                  payments:
+                    type: object
+                    additionalProperties:
+                      type: object
+                      properties:
+                        count: { type: integer }
+                        total: { type: number }
+                      required: [count, total]
+                required: [consultations, payments]
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    UuidId:
+      in: path
+      name: id
+      required: true
+      schema: { type: string, format: uuid }
+    SlotId:
+      in: path
+      name: slotId
+      required: true
+      schema: { type: string, format: uuid }
+  responses:
+    ValidationError:
+      description: Request validation failed
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Unauthorized:
+      description: Missing or invalid authentication credentials
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    Forbidden:
+      description: Authenticated user is not permitted to perform this operation
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorResponse' }
+    GenericObjectResponse:
+      description: Successful response; exact fields depend on the service result
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/GenericObject' }
+  schemas:
+    RegisterPatientRequest:
+      type: object
+      additionalProperties: false
+      required: [email, password, fullName]
+      properties:
+        email: { type: string, format: email, maxLength: 255 }
+        password: { type: string, minLength: 12, maxLength: 128, writeOnly: true }
+        fullName: { type: string, minLength: 2, maxLength: 150 }
+        phone: { type: string, minLength: 8, maxLength: 20 }
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [email, password]
+      properties:
+        email: { type: string, format: email, maxLength: 255 }
+        password: { type: string, minLength: 1, maxLength: 128, writeOnly: true }
+    AuthSession:
+      type: object
+      properties:
+        accessToken: { type: string }
+        refreshToken: { type: string, description: Returned by current service in the JSON body as well as set in a cookie. }
+        tokenType: { type: string, example: Bearer }
+        expiresIn: { type: string, example: 15m }
+        user: { $ref: '#/components/schemas/User' }
+      required: [accessToken, refreshToken, tokenType, expiresIn, user]
+    User:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        role: { type: string, enum: [PATIENT, DOCTOR, ADMIN] }
+        fullName: { type: [string, 'null'] }
+      required: [id, email, role]
+    CreateDoctorRequest:
+      type: object
+      additionalProperties: false
+      required: [email, password, fullName, specialization, licenseNumber, consultationFee]
+      properties:
+        email: { type: string, format: email, maxLength: 255 }
+        password: { type: string, minLength: 12, maxLength: 128, writeOnly: true }
+        fullName: { type: string, minLength: 2, maxLength: 150 }
+        specialization: { type: string, minLength: 2, maxLength: 120 }
+        licenseNumber: { type: string, minLength: 3, maxLength: 100 }
+        consultationFee: { type: number, minimum: 0 }
+        bio: { type: string, maxLength: 5000 }
+        phone: { type: string, minLength: 8, maxLength: 20 }
+    UpdateDoctorRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        specialization: { type: string, minLength: 2, maxLength: 120 }
+        bio: { type: [string, 'null'], maxLength: 5000 }
+        consultationFee: { type: number, minimum: 0 }
+        fullName: { type: string, minLength: 2, maxLength: 150 }
+        phone: { type: [string, 'null'], minLength: 8, maxLength: 20 }
+    CreateAvailabilityRequest:
+      type: object
+      additionalProperties: false
+      required: [startsAt, endsAt]
+      properties:
+        startsAt: { type: string, format: date-time }
+        endsAt: { type: string, format: date-time }
+    UpdateAvailabilityRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        startsAt: { type: string, format: date-time }
+        endsAt: { type: string, format: date-time }
+        status: { type: string, enum: [AVAILABLE, BLOCKED] }
+    CreateBookingRequest:
+      type: object
+      additionalProperties: false
+      required: [slotId]
+      properties:
+        slotId: { type: string, format: uuid }
+        reason: { type: string, maxLength: 2000 }
+    CreatePrescriptionRequest:
+      type: object
+      additionalProperties: false
+      required: [diagnosis, medications]
+      properties:
+        diagnosis: { type: string, minLength: 3, maxLength: 5000 }
+        medications:
+          type: array
+          maxItems: 50
+          items: { $ref: '#/components/schemas/Medication' }
+          default: []
+        instructions: { type: string, maxLength: 5000 }
+    Medication:
+      type: object
+      additionalProperties: false
+      required: [name, dosage, frequency]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 200 }
+        dosage: { type: string, minLength: 1, maxLength: 200 }
+        frequency: { type: string, minLength: 1, maxLength: 200 }
+        duration: { type: string, maxLength: 200 }
+    Readiness:
+      type: object
+      properties:
+        status: { type: string, enum: [ready, not_ready] }
+        database: { type: string, enum: [connected, disconnected] }
+        redis: { type: string, enum: [connected, disconnected] }
+      required: [status, database]
+    ErrorResponse:
+      type: object
+      properties:
+        error: { type: string }
+        message: { type: string }
+        requestId: { type: string }
+        details: {}
+      additionalProperties: true
+    GenericObject:
+      type: object
+      description: Placeholder schema for service responses whose exact structure should be verified against the implementation.
+      additionalProperties: true
